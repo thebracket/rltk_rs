@@ -74,7 +74,6 @@ struct AStar {
     start: usize,
     end: usize,
     open_list: BinaryHeap<Node>,
-    closed_list: HashMap<usize, f32>,
     parents: HashMap<usize, usize>,
     step_counter: usize,
 }
@@ -95,7 +94,6 @@ impl AStar {
             end,
             open_list,
             parents: HashMap::new(),
-            closed_list: HashMap::new(),
             step_counter: 0,
         }
     }
@@ -106,34 +104,38 @@ impl AStar {
     }
 
     /// Adds a successor; if we're at the end, marks success.
-    fn add_successor(&mut self, q: Node, idx: usize, cost: f32, map: &dyn BaseMap) -> bool {
+    fn add_successor(&mut self, q: Node, idx: usize, cost: f32, map: &dyn BaseMap, closed_list: &HashMap<usize, f32>) -> bool {
         // Did we reach our goal?
         if idx == self.end {
             self.parents.insert(idx, q.idx);
             true
         } else {
             let distance = self.distance_to_end(idx, map);
-            let s = Node {
-                idx,
-                f: distance + cost,
-                g: cost,
-                h: distance,
-            };
+            let f = distance + cost;
 
             // If a node with the same position as successor is in the open list with a lower f, skip add
-            let mut should_add = true;
-            for e in &self.open_list {
-                if e.f < s.f && e.idx == idx {
-                    should_add = false;
+            let mut should_add = self
+                .open_list
+                .iter()
+                .find(|e| e.idx == idx && e.f < f )
+                .is_none();
+
+            if should_add {
+                // If a node with the same position as successor is in the closed list, with a lower f, skip add
+                if let Some(cf) = closed_list.get(&idx) {
+                    if *cf < f {
+                        should_add = false;
+                    }
                 }
             }
 
-            // If a node with the same position as successor is in the closed list, with a lower f, skip add
-            if should_add && self.closed_list.contains_key(&idx) && self.closed_list[&idx] < s.f {
-                should_add = false;
-            }
-
             if should_add {
+                let s = Node {
+                    idx,
+                    f,
+                    g: cost,
+                    h: distance,
+                };
                 self.open_list.push(s);
                 self.parents.insert(idx, q.idx);
             }
@@ -152,16 +154,18 @@ impl AStar {
         let mut current = self.end;
         while current != self.start {
             let parent = self.parents[&current];
-            result.steps.insert(0, parent);
+            result.steps.push(parent);
             current = parent;
         }
+        result.steps.reverse();
 
         result
     }
 
     /// Performs an A-Star search
     fn search(&mut self, map: &dyn BaseMap) -> NavigationPath {
-        let result = NavigationPath::new();
+        let mut closed_list: HashMap<usize, f32> = HashMap::new();
+
         while !self.open_list.is_empty() && self.step_counter < MAX_ASTAR_STEPS {
             self.step_counter += 1;
 
@@ -172,17 +176,15 @@ impl AStar {
             let successors = map.get_available_exits(q.idx);
 
             for s in successors {
-                if q.idx != s.0 && self.add_successor(q, s.0, s.1 + q.f, map) {
+                if q.idx != s.0 && self.add_successor(q, s.0, s.1 + q.f, map, &closed_list) {
                     let success = self.found_it();
                     return success;
                 }
             }
 
-            if self.closed_list.contains_key(&q.idx) {
-                self.closed_list.remove(&q.idx);
-            }
-            self.closed_list.insert(q.idx, q.f);
+            closed_list.insert(q.idx, q.f);
         }
-        result
+
+        NavigationPath::new()
     }
 }
